@@ -784,40 +784,55 @@ function clamp01(x){ return Math.max(0, Math.min(1, x)); }
 // domanda base luxury: % di notti vendibili che il mercato luxury “riempie” in quel mese
 // (puoi tararla: alzando questi valori aumenti l’intero mercato luxury)
 function luxuryMarketFill(seas){
-  // seas.demand è già la stagionalità globale (0.55..1.40)
-  // qui creiamo una base “luxury” che non collassi troppo in bassa stagione
-  const base = 0.35;
-const seasonal = 0.35 * seas.demand;
-return clamp01(base + seasonal); // inverno ~0.41, estate ~0.65
+  const base = 0.45;              // NON 0.25
+  const seasonal = 0.40 * seas.demand;
+  return clamp01(base + seasonal);
 }
 
-// calcola quota di scelta per una struttura tra le luxury attive nello stesso borgo o globale
-function luxuryChoiceShare(structs, s, state, seas){
-  // parametrizzazione (tarabile)
-const BETA_PRICE  = 0.0045;   // era 0.006  (meno punizione prezzo)
-const BETA_QUAL   = 0.75;     // era 0.55   (Q5 più appetibile)
-const OUTSIDE_U   = -0.20;    // era 0.70   (molto meno “fuga dal mercato”)
-  const BETA_BORGO = 0.30;  // premio borgo
-  const BETA_POOL  = 0.25;  // premio piscina
-  const BETA_REVIEW= 0.10;  // premio recensioni (leggero)
-  
+
+
+// ===============================
+// PREMIUM DEMAND MODEL (Logit choice) — Q3–Q5
+// ===============================
+
+function premiumMarketFill(seas){
+  // mercato premium (Q3–Q5): più grande del “luxury puro”
+  const base = 0.55;
+  const seasonal = 0.35 * seas.demand;
+  return clamp01(base + seasonal); // clamp01 lo taglia a 1 se supera
+}
+
+function premiumChoiceShare(structs, s, state){
+  // taratura: 1 step qualità deve “valere” > 10€ di prezzo
+  const BETA_PRICE = 0.0030;  // 10€ => 0.03
+  const BETA_QUAL  = 0.28;    // Q4 vs Q3 => +0.28 (batte +10€)
+  const BETA_POOL  = 0.18;
+  const BETA_BORGO = 0.22;
+  const BETA_CLEAN = 0.12;
+  const BETA_REVIEW= 0.10;
+
+  // IMPORTANTISSIMO: se questo è troppo alto, l'occupancy crolla.
+  // Prova 0.10 oppure 0.00 se hai ancora occ troppo bassa.
+  const OUTSIDE_U  = 0.10;
 
   const maxBorgo = Math.max(...Object.values(state.borgoValues || {Montepulciano:1}));
-  const borgoW = (state.borgoValues?.[s.borgo] || 1);
-  const borgoNorm = borgoW / maxBorgo;
 
   function U(x){
     const bw = (state.borgoValues?.[x.borgo] || 1) / maxBorgo;
-    const qualScore = (x.qualita === 5) ? 1 : 0; // Q5 bonus "discreto" (il Q4 è baseline)
+
+    // qualità a step: Q3=0, Q4=1, Q5=2
+    const qStep = Math.max(0, (x.qualita || 0) - 3);
+
+    const clean = (x.pulizie || 2) - 2; // -1..+1
     const review = (typeof x.recensioni === 'number') ? x.recensioni : 7.5;
 
-    // utilità: qualità + borgo + piscina + review - prezzo
     return (
-      (BETA_QUAL * qualScore) +
+      (BETA_QUAL  * qStep) +
       (BETA_BORGO * bw) +
-      (BETA_POOL * (x.piscina ? 1 : 0)) +
-      (BETA_REVIEW * ((review - 7.0) / 3.0)) -
-      (BETA_PRICE * x.prezzo)
+      (BETA_POOL  * (x.piscina ? 1 : 0)) +
+      (BETA_CLEAN * clean) +
+      (BETA_REVIEW* ((review - 7.0) / 3.0)) -
+      (BETA_PRICE * (x.prezzo || 0))
     );
   }
 
@@ -829,6 +844,7 @@ const OUTSIDE_U   = -0.20;    // era 0.70   (molto meno “fuga dal mercato”)
   const idx = structs.findIndex(x => x.id === s.id);
   return (idx >= 0) ? (exps[idx] / denom) : 0;
 }
+
 
 
 // ============ Calcolo mensile ============
@@ -949,94 +965,73 @@ state.structures.forEach(s=>{
   const baseTargets = {1:70,2:120,3:180,4:300,5:500};
   const target = baseTargets[s.qualita] || 120;
 
-  // ⬇️ QUI VA INSERITO IL BLOCCO NUOVO DI OCCUPANCY
-
-
 // =========================
-// OCCUPANCY BASE (Q1–Q3) + LOGIT (Q4–Q5)
+// OCCUPANCY (Q1–Q2 classico) + PREMIUM LOGIT (Q3–Q5)
 // =========================
-
-// variabili utili (per review e per Q1–Q3)
 const priceRatio = s.prezzo / Math.max(1, target);
 const borgoW_here = state.borgoValues[s.borgo] || 1;
 
-// occ verrà assegnata in modo diverso per low/mid vs luxury
 let occ = 0;
 
-// ---------- Q1–Q3: curva “classica” prezzo/target + stagionalità ----------
-if (s.qualita <= 3) {
+// ---------- Q1–Q2: curva “classica” prezzo/target ----------
+if (s.qualita <= 2) {
   const priceSensEff = P.priceSens * seas.priceAmp;
   occ = 0.70 * Math.exp(-priceSensEff * (priceRatio - 1));
 
-  // qualità/pulizie/piscina/borghi/competizione locale
-  occ *= (1 + 0.08*(s.pulizie-2));
-  if (s.piscina) occ *= 1.20;
+  // driver base
+  occ *= (1 + 0.08 * (s.pulizie - 2));
+  if (s.piscina) occ *= 1.15;                 // un filo meno che prima
   occ *= borgoW_here;
-  occ *= 1/Math.max(0.5, P.localCompetition);
+  occ *= 1 / Math.max(0.5, P.localCompetition);
 
-  // segmenti
-  const segMul = (s.qualita<=2 ? P.segEconomy : P.segMid);
-  occ *= segMul;
+  // segmento
+  occ *= P.segEconomy;
 
   // shock
   if (shock.active) {
-    if (shock.target==='borgo') occ *= shock.factor;
-    if (shock.target==='economy' && s.qualita<=2) occ *= shock.factor;
-    if (shock.target==='mid'     && s.qualita===3) occ *= shock.factor;
+    if (shock.target === 'borgo') occ *= shock.factor;
+    if (shock.target === 'economy') occ *= shock.factor;
   }
 
-  // boost + random + stagionalità (solo non-luxury)
+  // random + stagionalità
   occ *= P.occupancyBoost;
-  occ *= (0.95 + Math.random()*0.10);
+  occ *= (0.95 + Math.random() * 0.10);
   occ = clamp(occ * seas.demand, 0.10, 0.98);
 }
 
-// ---------- Q4–Q5: LOGIT CHOICE (quota di mercato luxury) ----------
+// ---------- Q3–Q5: PREMIUM LOGIT (quota mercato premium) ----------
 else {
-  const luxuryGroup = state.structures.filter(x => x.qualita >= 4 && !x.closed);
+  const premGroup = state.structures.filter(x => x.qualita >= 3 && !x.closed);
 
-  const share = luxuryChoiceShare(luxuryGroup, s, state, seas);
-  const marketFill = luxuryMarketFill(seas);
+  const share = premiumChoiceShare(premGroup, s, state);
+  const marketFill = premiumMarketFill(seas);
 
-  // base occ luxury = quota * dimensione mercato luxury
   occ = share * marketFill;
 
-  // servizi contano ma “dentro” la utility del logit (piscina/borgo/review già pesano lì)
-  // shock luxury (se attivo)
+// ✅ FLOOR REALISTICO (fondamentale)
+if (s.qualita === 4) occ = Math.max(occ, 0.45);
+if (s.qualita === 5) occ = Math.max(occ, 0.55);
+
+  // shock premium
   if (shock.active) {
-    if (shock.target==='borgo')  occ *= shock.factor;
-    if (shock.target==='luxury') occ *= shock.factor;
+    if (shock.target === 'borgo') occ *= shock.factor;
+    if (shock.target === 'mid'    && s.qualita === 3) occ *= shock.factor;
+    if (shock.target === 'luxury' && s.qualita >= 4) occ *= shock.factor;
   }
 
-  // boost (globale)
+  // boost + micro-random (niente seas.demand qui: già dentro marketFill)
   occ *= P.occupancyBoost;
-
-  // micro random (molto lieve)
   occ *= (0.97 + Math.random() * 0.06);
 
+  // pulizie pessime sui premium/luxury: impatta davvero
+  if (s.pulizie === 1) occ *= 0.25;
+  else if (s.pulizie === 2) occ *= 0.70;
+
+  // clamp finale
   occ = clamp(occ, 0.05, 0.98);
-}
-
-// (opzionale) sottoprezzo sospetto Q5: leggerissimo
-if (s.qualita === 5 && s.prezzo < 200) {
-  occ *= 0.95;
-}
+}  
 
 
-
-  // ---------- penalità pulizie luxury ----------
-if (s.qualita >= 4) {
-  if (s.pulizie === 1) {
-    occ *= 0.15;
-    s.recensioni = Math.max(3.8, (s.recensioni || 7.0) - 2.2);
-    log(`🚨 ${s.nome}: pulizie livello 1 — collasso totale della reputazione.`);
-  } 
-  else if (s.pulizie === 2) {
-    occ *= 0.35;
-    s.recensioni = Math.max(5.0, (s.recensioni || 7.5) - 1.5);
-    log(`⚠️ ${s.nome}: pulizie livello 2 — forte crisi di immagine e calo prenotazioni.`);
-  }
-}
 
 // ---------- marketing ----------
 const marketing = Math.min(owner.marketing || 0, 5000); // cap a 5000 €/mese
