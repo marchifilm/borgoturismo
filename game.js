@@ -994,7 +994,6 @@ const priceRatio = s.prezzo / Math.max(1, target);
 // =========================
 // OCCUPANCY (Q1–Q2 classico) + PREMIUM LOGIT (Q3–Q5)
 // =========================
-
 const borgoW_here = state.borgoValues[s.borgo] || 1;
 
 let occ = 0;
