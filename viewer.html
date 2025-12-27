@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Borgo Turismo — Situazione Live</title>
+<style>
+  body { font-family: "Inter", system-ui, sans-serif; margin: 10px; background: #faf9f7; color: #333; }
+  h1 { text-align: center; font-size: 1.4em; margin-bottom: 10px; }
+  h2 { margin-top: 25px; font-size: 1.2em; border-bottom: 2px solid #ccc; padding-bottom: 4px; }
+  .report-box { background: #fff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 15px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+  th, td { padding: 8px 6px; border-bottom: 1px solid #ddd; text-align: left; white-space: nowrap; }
+  tr:hover { background: #f9f9f9; }
+  th { background: #f3f3f3; position: sticky; top: 0; z-index: 2; }
+  .table-container { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .log { background: #111; color: #eee; font-family: monospace; padding: 10px; border-radius: 8px; max-height: 300px; overflow-y: auto; white-space: pre-line; font-size: 0.85em; }
+  button { padding: 5px 8px; margin: 3px; border-radius: 6px; border: 1px solid #bbb; background: #f6f6f6; cursor: pointer; font-size: 0.85em; }
+  button:hover { background: #e9e9e9; }
+  .closeBtn { background: #c33; color: #fff; border: none; padding: 8px 12px; margin-top: 10px; }
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; justify-content: center; align-items: center; visibility: hidden; opacity: 0; transition: opacity 0.3s; }
+  .modal.active { visibility: visible; opacity: 1; z-index: 9999; }
+  .modal-content { background: white; padding: 15px; border-radius: 10px; width: 90%; max-width: 750px; max-height: 90%; overflow: auto; position: relative; z-index: 10000; }
+  @media (max-width: 600px) {
+    th, td { font-size: 0.75em; padding: 6px 4px; }
+    button { font-size: 0.75em; padding: 4px 6px; }
+    .report-box { padding: 10px; }
+    h1 { font-size: 1.1em; }
+    h2 { font-size: 1em; }
+  }
+  table, th, td { position: relative; z-index: 1; }
+</style>
+</head>
+<body>
+  <div id="output">Caricamento dati...</div>
+  <div id="modal" class="modal"><div class="modal-content" id="modalBody"></div></div>
+
+<script type="module">
+// === Config ===
+const USE_FIREBASE = navigator.onLine; // se sei online, usa Firebase
+const LOCAL_REFRESH_INTERVAL = 3000;   // ogni 3 secondi aggiorna da game.js
+const MONTH_NAMES = ["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"];
+const playerColors = [
+  'rgba(255, 120, 120, 0.25)',
+  'rgba(120, 160, 255, 0.25)',
+  'rgba(255, 255, 140, 0.35)',
+  'rgba(150, 255, 150, 0.35)',
+  'rgba(220, 150, 255, 0.35)'
+];
+
+if (USE_FIREBASE) {
+  console.log("🌐 Modalità online (Firebase)");
+  import("https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js").then(async ({ initializeApp }) => {
+    const { getFirestore, doc, onSnapshot } = await import("https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js");
+    const app = initializeApp({
+      apiKey: "AIzaSyC-ImgUlfUytWPf9RPjszzVLGhbjIj5dpI",
+      authDomain: "borgoturismolive.firebaseapp.com",
+      projectId: "borgoturismolive",
+      storageBucket: "borgoturismolive.appspot.com",
+      messagingSenderId: "906079573201",
+      appId: "1:906079573201:web:9a69f7b9e31af9c4b4e1f0"
+    });
+    const db = getFirestore(app);
+    onSnapshot(doc(db, "game", "state"), snap => {
+      if (!snap.exists()) {
+        document.getElementById("output").innerHTML = "<p>Nessun dato trovato.</p>";
+      } else {
+        render(snap.data());
+      }
+    });
+  });
+} else {
+  console.log("📁 Modalità offline: lettura da game.js locale");
+  // importa il game.js locale e leggi window.state
+  const script = document.createElement('script');
+  script.src = './game.js';
+  script.onload = () => {
+    if (window.state) render(window.state);
+    // aggiorna ogni pochi secondi
+    setInterval(() => {
+      if (window.state) render(window.state);
+    }, LOCAL_REFRESH_INTERVAL);
+  };
+  document.body.appendChild(script);
+}
+
+// === Funzione principale di rendering ===
+function render(data) {
+  const players = data.players || [];
+  const structures = (data.structures || []).slice();
+  const year = data.year || 1;
+  const month = data.month || 1;
+  let html = `
+    <h1>Borgo Turismo — Situazione Live</h1>
+    <div class="report-box"><h2>📅 Anno ${year}, ${MONTH_NAMES[month-1]}</h2></div>
+    <div class="report-box"><h2>👥 Giocatori</h2>
+    <div class="table-container"><table>
+    <tr><th>Nome</th><th>Budget</th><th>Prestiti</th><th>Azioni</th></tr>`;
+  for (const [i, p] of players.entries()) {
+    const loans = (p.loans && p.loans.length) ? p.loans.map(l => `€${l.principal}`).join(", ") : "—";
+    html += `<tr style="background:${playerColors[i % playerColors.length]}">
+      <td>${p.name}</td>
+      <td>€ ${Number(p.budget).toLocaleString('it-IT')}</td>
+      <td>${loans}</td>
+      <td><button onclick="showPlayerHistory('${p.id}')">Storico</button></td>
+    </tr>`;
+  }
+  html += `</table></div></div>`;
+
+  // Strutture ordinate
+  const sortMode = window.currentSortMode || 'borgo';
+  const sorted = [...structures].sort((a,b)=>{
+    if (sortMode==='owner') {
+      const pa = players.find(p=>p.id===a.ownerId)?.name || '';
+      const pb = players.find(p=>p.id===b.ownerId)?.name || '';
+      return pa.localeCompare(pb,'it');
+    }
+    return (a.borgo||'').localeCompare(b.borgo||'','it');
+  });
+
+  html += `<div class="report-box">
+      <h2>🏠 Strutture</h2>
+      <div style="margin-bottom:8px;font-size:0.9em;">
+        <strong>Ordina per:</strong>
+        <button onclick="setSortMode('borgo')" style="background:${sortMode==='borgo'?'#d0e8ff':'#f6f6f6'};">Borgo</button>
+        <button onclick="setSortMode('owner')" style="background:${sortMode==='owner'?'#d0e8ff':'#f6f6f6'};">Proprietario</button>
+      </div>
+      <div class="table-container"><table>
+        <tr><th>Proprietario</th><th>Nome</th><th>Borgo</th><th>Qualità</th><th>Pulizie</th><th>Camere</th><th>Piscina</th><th>Prezzo</th><th>Occupancy</th><th>Recensioni</th><th>Ultimo fatturato</th><th>Azioni</th></tr>`;
+  for (const s of sorted) {
+    const owner = players.find(p=>p.id===s.ownerId);
+    const bg = playerColors[players.indexOf(owner) % playerColors.length];
+    html += `<tr style="background:${bg}">
+      <td>${owner ? owner.name : '-'}</td>
+      <td>${s.chiusa ? `<span style="color:red;">${s.nome}</span>` : s.nome}</td>
+      <td>${s.borgo}</td>
+      <td>${s.qualita}</td>
+      <td>${s.pulizie}</td>
+      <td>${s.camere}</td>
+      <td>${s.piscina ? "Sì" : "No"}</td>
+      <td>€ ${s.prezzo}</td>
+      <td>${s.lastOcc || '-'}</td>
+      <td>${s.recensioni || '-'}</td>
+      <td>€ ${s.lastRevenue || 0}</td>
+      <td><button onclick="showStructHistory('${s.id}')">Storico</button></td>
+    </tr>`;
+  }
+  html += `</table></div></div>`;
+
+  const logs = data.reportLog || [];
+  html += `<div class="report-box"><h2>📝 Log di Gioco</h2><div class="log">${logs.length ? logs.slice(0,50).join("\n") : "<em>Nessun evento registrato.</em>"}</div></div>`;
+  document.getElementById("output").innerHTML = html;
+  window.currentData = data;
+  window.currentSortMode = sortMode;
+}
+
+// Ordinamento dinamico
+window.setSortMode = function(mode){ window.currentSortMode = mode; render(window.currentData); };
+
+// Popup
+window.showPlayerHistory = function(pid){
+  const p = (window.currentData.players||[]).find(x=>x.id===pid);
+  if (!p) return;
+  const rows = (p.historyAnnual||[]).map(h=>`
+    <tr><td>${h.year}</td><td>€ ${h.gross}</td><td>€ ${h.mgmt}</td><td>€ ${h.taxes}</td><td>€ ${h.net}</td><td>€ ${h.budget}</td></tr>`).join('');
+  openModal(`<h3>Storico Giocatore — ${p.name}</h3>
+  <table><tr><th>Anno</th><th>Lordo</th><th>Gestione</th><th>Tasse</th><th>Netto</th><th>Budget</th></tr>${rows}</table>
+  <button class="closeBtn" onclick="closeModal()">Chiudi</button>`);
+};
+window.showStructHistory = function(id){
+  const s = (window.currentData.structures||[]).find(x=>x.id===id);
+  if (!s) return;
+  const rows=(s.historyMonthly||[]).map(h=>`
+  <tr><td>${h.y}</td><td>${MONTH_NAMES[(h.m||1)-1]}</td><td>${h.notti}</td><td>${h.occ}%</td><td>€ ${h.revenue}</td></tr>`).join('');
+  openModal(`<h3>Storico Struttura — ${s.nome}</h3>
+  <table><tr><th>Anno</th><th>Mese</th><th>Notti</th><th>Occupancy</th><th>Ricavi</th></tr>${rows}</table>
+  <button class="closeBtn" onclick="closeModal()">Chiudi</button>`);
+};
+function openModal(content){const m=document.getElementById('modal');const b=document.getElementById('modalBody');b.innerHTML=content;m.classList.add('active');}
+window.closeModal=function(){document.getElementById('modal').classList.remove('active');};
+</script>
+</body>
+</html>
