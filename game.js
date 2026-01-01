@@ -1798,14 +1798,7 @@ renderStructures();
 renderLeaderboard();
 renderLog();
 
-// 🔔 AUTO-OPEN REPORT ANNUALE (solo 1 volta per ts, anche dopo refresh)
-const ts = state.lastAnnualReport?.ts;
-if (ts && !hasSeenAnnual(ts)) {
-  markSeenAnnual(ts); // prima lo marchi, poi apri
-  setTimeout(() => openAnnualReport(true), 250);
-}
-
-   // label mese/anno
+  // label mese/anno
 const yl = document.getElementById('yearLabel');
 const ml = document.getElementById('monthLabel');
 const mn = document.getElementById('monthName');
@@ -1813,13 +1806,12 @@ if (yl) yl.textContent = state.year;
 if (ml) ml.textContent = state.month;
 if (mn) mn.textContent = MONTH_NAMES[(state.month || 1) - 1];
 
-// 🔔 AUTO-OPEN REPORT ANNUALE (solo 1 volta per utente per ts, anche dopo refresh)
+// 🔔 AUTO-OPEN REPORT ANNUALE (solo 1 volta per ts, anche dopo refresh)
 const ts = state.lastAnnualReport?.ts;
 if (ts && !hasSeenAnnual(ts)) {
-  markSeenAnnual(ts); // prima marchia, poi apri
+  markSeenAnnual(ts); // prima lo marchi, poi apri
   setTimeout(() => openAnnualReport(true), 250);
 }
-
 console.log("🔄 STATE aggiornato da Firebase (live)");
   });
 
